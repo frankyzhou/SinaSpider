@@ -4,18 +4,41 @@ import datetime
 from scrapy.spider import CrawlSpider
 from scrapy.selector import Selector
 from scrapy.http import Request
-from Sina_spider1.items import InformationItem, TweetsItem, FollowsItem, FansItem
+import json
+import requests
+from items import FollowsItem
+
+def json_loads_byteified(json_text):
+    return _byteify(json.loads(json_text, object_hook=_byteify), ignore_dicts=True)
 
 
+def _byteify(data, ignore_dicts =False):
+    # if this is a unicode string, return its string representation
+    if isinstance(data, unicode):
+        return data.encode('utf-8')
+    # if this is a list of values, return list of byteified values
+    if isinstance(data, list):
+        return [_byteify(item, ignore_dicts=True) for item in data]
+    # if this is a dictionary, return dictionary of byteified keys and values
+    # but only if we haven't already byteified it
+    if isinstance(data, dict) and not ignore_dicts:
+        return {_byteify(key, ignore_dicts=True): _byteify(value, ignore_dicts=True)
+                for key, value in data.iteritems()
+                }
+    # if it's anything else, return it in its original form
+    return data
+
+
+start_urls = [
+    7315353232, 6746605430, 8736280376, 5706383934, 9154536087
+]
+scrawl_ID = set(start_urls)
+finish_ID = set()
 class Spider(CrawlSpider):
     name = "xqSpider"
     host = "https://xueqiu.com/"
-
-    start_urls = [
-        7315353232
-    ]
-    scrawl_ID = set(start_urls)  # 记录待爬的微博ID
-    finish_ID = set()  # 记录已爬的微博ID
+    # scrawl_ID = set(start_urls)  # 记录待爬的微博ID
+    # finish_ID = set()  # 记录已爬的微博ID
 
     def start_requests(self):
         send_headers = {
@@ -30,19 +53,22 @@ class Spider(CrawlSpider):
             'Cookie': "dfadfadfa"
         }
         while True:
-            ID = self.scrawl_ID.pop()
-            self.finish_ID.add(ID)  # 加入已爬队列
+            ID = scrawl_ID.pop()
+            print ID
+            print len(scrawl_ID), len(finish_ID)
+            print "-"*20
+            finish_ID.add(ID)  # 加入已爬队列
             ID = str(ID)
             follows = []
             followsItems = FollowsItem()
             followsItems["_id"] = ID
             followsItems["follows"] = follows
-            fans = []
-            fansItems = FansItem()
-            fansItems["_id"] = ID
-            fansItems["fans"] = fans
+            # fans = []
+            # fansItems = FansItem()
+            # fansItems["_id"] = ID
+            # fansItems["fans"] = fans
 
-            url_follows = "https://xueqiu.com/friendships/groups/members.json?page=1&uid=%s&gid=0" % ID
+            url_follows = "https://xueqiu.com/friendships/groups/members.json?uid=%s&gid=0&page=1" % ID
             "关注"
             url_fans = "https://xueqiu.com/friendships/followers.json?pageNo=1&uid=%s&size=20" % ID
             "粉丝"
@@ -56,19 +82,18 @@ class Spider(CrawlSpider):
             "最高讨论次数的股票"
             url_stocks_follow = "https://xueqiu.com/stock/portfolio/stocks.json?size=1000&tuid=%s" % ID
             "关注的股票（包括指数）与组合"
-            # yield Request(url=url_follows, meta={"item": followsItems, "result": follows},
-            #               callback=self.parse3)  # 去爬关注人
-            yield Request(url=url_follows,
-                     headers={
-                         'Accept': 'text / html, application / xhtml + xml, application / xml;q = 0.9, image / webp, * / *;q = 0.8',
-            'Accept - Encoding':'gzip, deflate, sdch',
-            'Accept - Language':'en - US, en; q = 0.8, zh - CN;q = 0.6, zh; q = 0.4',
-            'Cache - Control':'max - age = 0',
-            'Connection':'keep - alive',
-            'Upgrade - Insecure - Requests':'1',
-            'User - Agent':'Mozilla / 5.0(Windows NT 6.1;WOW64) AppleWebKit / 537.36(KHTML, like Gecko) Chrome / 50.0.2661.102Safari / 537.36'
-            },
-                     callback=self.parse3)
+            yield Request(url=url_follows, meta={"item": followsItems, "result": follows},
+                          callback=self.parse3)  # 去爬关注人
+            # respose = requests.request(url_follows)
+            #          headers={
+            #              'Accept': 'text / html, application / xhtml + xml, application / xml;q = 0.9, image / webp, * / *;q = 0.8',
+            # 'Accept - Encoding':'gzip, deflate, sdch',
+            # 'Accept - Language':'en - US, en; q = 0.8, zh - CN;q = 0.6, zh; q = 0.4',
+            # 'Cache - Control':'max - age = 0',
+            # 'Connection':'keep - alive',
+            # 'Upgrade - Insecure - Requests':'1',
+            # 'User - Agent':'Mozilla / 5.0(Windows NT 6.1;WOW64) AppleWebKit / 537.36(KHTML, like Gecko) Chrome / 50.0.2661.102Safari / 537.36'
+            # },
             # yield Request(url=url_fans, meta={"item": fansItems, "result": fans}, callback=self.parse3)  # 去爬粉丝
             # yield Request(url=url_information0, meta={"ID": ID}, callback=self.parse0)  # 去爬个人信息
             # yield Request(url=url_tweets, meta={"ID": ID}, callback=self.parse2)  # 去爬微博
@@ -181,20 +206,22 @@ class Spider(CrawlSpider):
     def parse3(self, response):
         """ 抓取关注或粉丝 """
         items = response.meta["item"]
-        selector = Selector(response)
-        text2 = selector.xpath(
-            u'body//table/tr/td/a[text()="\u5173\u6ce8\u4ed6" or text()="\u5173\u6ce8\u5979"]/@href').extract()
-        for elem in text2:
-            elem = re.findall('uid=(\d+)', elem)
-            if elem:
-                response.meta["result"].append(elem[0])
-                ID = int(elem[0])
-                if ID not in self.finish_ID:  # 新的ID，如果未爬则加入待爬队列
-                    self.scrawl_ID.add(ID)
-        url_next = selector.xpath(
-            u'body//div[@class="pa" and @id="pagelist"]/form/div/a[text()="\u4e0b\u9875"]/@href').extract()
-        if url_next:
-            yield Request(url=self.host + url_next[0], meta={"item": items, "result": response.meta["result"]},
-                          callback=self.parse3)
+        json_data = json_loads_byteified(response.body)
+        for elem in json_data["users"]:
+            ID = elem["id"]
+            response.meta["result"].append(ID)
+            if ID not in finish_ID:  # 新的ID，如果未爬则加入待爬队列
+                scrawl_ID.add(ID)
+        page, maxp_age = json_data["page"], json_data["maxPage"]
+        print str(len(scrawl_ID)) + "in parse"
+        if page < 1:
+            page += 1
+            next_url = response.url.split('page=')[0] + "page=" + str(page)
+            yield Request(url=next_url, meta={"item": items, "result": response.meta["result"]}, callback=self.parse3)
+        # url_next = selector.xpath(
+        #     u'body//div[@class="pa" and @id="pagelist"]/form/div/a[text()="\u4e0b\u9875"]/@href').extract()
+        # if url_next:
+        #     yield Request(url=self.host + url_next[0], meta={"item": items, "result": response.meta["result"]},
+        #                   callback=self.parse3)
         else:  # 如果没有下一页即获取完毕
             yield items
